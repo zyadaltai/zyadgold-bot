@@ -108,8 +108,8 @@ from crewai import Agent, Task, Crew, Process, LLM
 # 3. إعداد مفاتيح Groq و Telegram
 # ===========================================================================
 GROQ_KEY = os.environ.get("GROQ_API_KEY")
-TELEGRAM_BOT_TOKEN = "8604798401:AAExVrQEDyBzcEHYArwyE41qOOtN9G_AVy4"
-TELEGRAM_CHAT_ID = "1799603308"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 os.environ["GROQ_API_KEY"] = GROQ_KEY
 os.environ["LITELLM_DROP_PARAMS"] = "True"
