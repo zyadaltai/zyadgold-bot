@@ -1,0 +1,7 @@
+crewai
+yfinance
+pandas
+numpy
+requests
+litellm
+flask
