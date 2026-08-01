@@ -362,29 +362,54 @@ def fetch_market_metrics() -> dict:
     }
 
 # ===========================================================================
-# 7. وكلاء الذكاء الاصطناعي
+# 7. وكلاء الذكاء الاصطناعي (تمت إضافة مدير المخاطر)
 # ===========================================================================
 analyst_agent = Agent(
     role="Enterprise Chief Quantitative Officer",
     goal="Synthesize multi-timeframe quantitative data, MACD, Bollinger Bands, and risk parameters.",
-    backstory="Global head of quantitative analysis.",
+    backstory="Global head of quantitative analysis. You read market numbers logically without emotion.",
+    llm=groq_llm,
+    verbose=True
+)
+
+risk_manager_agent = Agent(
+    role="Strict Risk Manager",
+    goal="Protect capital by strictly reviewing the trade setup. Ensure Stop Loss (SL) is present and risk distance is safe. Reject unsafe trades.",
+    backstory="You are the ultimate gatekeeper. You hate uncalculated risk. If the trend is unclear or the setup is weak, you strictly veto the trade.",
     llm=groq_llm,
     verbose=True
 )
 
 signal_agent = Agent(
     role="Gold Execution Officer",
-    goal="Format pristine Arabic enterprise trade cards.",
-    backstory="Wall Street senior desk execution officer.",
+    goal="Format pristine Arabic enterprise trade cards based on the Risk Manager's final approval.",
+    backstory="Wall Street senior desk execution officer. You only publish trades that have passed the strict review of the Risk Manager.",
     llm=groq_llm,
     verbose=True
 )
 
-task1 = Task(description="Analyze inputs: {market_data}.", expected_output="Report.", agent=analyst_agent)
+task1 = Task(
+    description="Analyze inputs: {market_data}. Determine the trend and technical strength.",
+    expected_output="Technical analysis report.",
+    agent=analyst_agent
+)
+
+task_risk = Task(
+    description=(
+        "Review the technical report and {market_data}. "
+        "Check if the pre_calculated_trade is safe (e.g., has a valid SL, trend matches action). "
+        "If unsafe, highly volatile, or facing high impact news, output a VETO command. If safe, output APPROVED."
+    ),
+    expected_output="APPROVED or VETO with a short explanation.",
+    agent=risk_manager_agent,
+    context=[task1]
+)
+
 task2 = Task(
     description=(
-        "قم بصياغة بطاقة توصية تداول مؤسسية شاملة باللغة العربية الفصحى مستخدماً حصراً المعطيات الواردة في {market_data}.\n"
-        "القالب الإلزامي:\n\n"
+        "Read the Risk Manager's decision. "
+        "IF the decision is VETO, output exactly: '⚠️ **تدخل مدير المخاطر:** تم إلغاء الصفقة نظراً لارتفاع المخاطرة أو عدم وضوح الاتجاه. حماية رأس المال هي الأولوية.'\n"
+        "IF the decision is APPROVED, format the following card exactly in Arabic:\n"
         "🌐 **بطاقة التداول المؤسسي المتقدمة (XAUUSD)**\n"
         "-----------------------------------\n"
         "📍 **السعر الحالي:** [current_price]\n"
@@ -404,15 +429,16 @@ task2 = Task(
         "📰 **التقويم الاقتصادي الحي:**\n"
         "[live_news]\n\n"
         "💡 **التحليل المؤسسي:**\n"
-        "تم فحص التقويم الفني والمؤشرات المتقدمة."
+        "تم التدقيق من قبل فريق إدارة المخاطر واعتماد الصفقة."
     ),
-    expected_output="بطاقة تداول مؤسسية متكاملة.",
-    agent=signal_agent
+    expected_output="Final formatted message for Telegram (either trade card or Veto message).",
+    agent=signal_agent,
+    context=[task_risk]
 )
 
 crew = Crew(
-    agents=[analyst_agent, signal_agent],
-    tasks=[task1, task2],
+    agents=[analyst_agent, risk_manager_agent, signal_agent],
+    tasks=[task1, task_risk, task2],
     process=Process.sequential,
     verbose=True
 )
@@ -436,8 +462,12 @@ def background_bot_loop():
             result_text = str(result)
             
             send_telegram_message(result_text)
-            log_trade_to_db(market_data['pre_calculated_trade'], current_time)
-            print("[+] ✅ تمت دورة الإرسال والتخزين بنجاح!")
+            
+            # تسجيل الصفقة فقط إذا وافق عليها مدير المخاطر (لم يتم عمل فيتو)
+            if "تدخل مدير المخاطر" not in result_text:
+                log_trade_to_db(market_data['pre_calculated_trade'], current_time)
+                
+            print("[+] ✅ تمت دورة الإرسال بنجاح!")
             
         except Exception as e:
             print(f"[-] خطأ: {e}")
