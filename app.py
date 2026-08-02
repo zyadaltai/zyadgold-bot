@@ -11,7 +11,7 @@ from datetime import datetime
 from flask import Flask
 
 # ===========================================================================
-# إعداد خادم الويب (Flask) لإبقاء البوت متصلاً على السحابة 24/7
+# 1. إعداد خادم الويب (Flask) لإبقاء البوت متصلاً على السحابة 24/7
 # ===========================================================================
 app_flask = Flask(__name__)
 
@@ -30,7 +30,7 @@ DEFAULT_ACCOUNT_SIZE = 5000.0
 DEFAULT_RISK_PERCENTAGE = 0.01  
 
 # ===========================================================================
-# 1. إعداد قاعدة البيانات المحلية (SQLite)
+# 2. إعداد قاعدة البيانات المحلية (SQLite)
 # ===========================================================================
 def init_db():
     conn = sqlite3.connect("gold_bot_trades.db", check_same_thread=False)
@@ -59,12 +59,12 @@ def log_trade_to_db(trade_data, timestamp):
             INSERT INTO trades (timestamp, action, entry, sl, tp1, tp2, lot_size, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            timestamp, 
-            trade_data.get('action'), 
-            trade_data.get('entry'), 
-            trade_data.get('sl'), 
-            trade_data.get('tp1'), 
-            trade_data.get('tp2'), 
+            timestamp,
+            trade_data.get('action'),
+            trade_data.get('entry'),
+            trade_data.get('sl'),
+            trade_data.get('tp1'),
+            trade_data.get('tp2'),
             trade_data.get('lot_size'),
             'Active'
         ))
@@ -85,11 +85,11 @@ def get_last_trade_from_db():
         return None
 
 # ===========================================================================
-# 2. تفعيل معالجة الطلبات وإلغاء المعلمات غير المدعومة لـ Groq
+# 3. إعداد LiteLLM و CrewAI
 # ===========================================================================
 import litellm
-
 _original_completion = litellm.completion
+
 def _cleaned_completion(*args, **kwargs):
     if "messages" in kwargs and isinstance(kwargs["messages"], list):
         for msg in kwargs["messages"]:
@@ -104,12 +104,9 @@ litellm.drop_params = True
 
 from crewai import Agent, Task, Crew, Process, LLM
 
-# ===========================================================================
-# 3. إعداد مفاتيح Groq و Telegram
-# ===========================================================================
-GROQ_KEY = os.environ.get("GROQ_API_KEY")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 os.environ["GROQ_API_KEY"] = GROQ_KEY
 os.environ["LITELLM_DROP_PARAMS"] = "True"
@@ -212,17 +209,15 @@ def send_telegram_message(message_text: str):
 def handle_telegram_command(chat_id, text):
     text = text.strip()
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    
     reply_text = ""
     lower_text = text.lower()
-    
+
     if lower_text == "/price":
         try:
             ind = EnterpriseEngine.calculate_indicators()
             reply_text = f"📍 **السعر الفوري الحالي للذهب (XAUUSD):** `{ind['price']} $`"
         except Exception:
             reply_text = "[-] عذراً، تعذر جلب السعر حالياً."
-            
     elif lower_text in ["/tech", "/indicators"]:
         try:
             ind = EnterpriseEngine.calculate_indicators()
@@ -238,7 +233,6 @@ def handle_telegram_command(chat_id, text):
             )
         except Exception:
             reply_text = "[-] عذراً، حدث خطأ أثناء حساب المؤشرات الحية."
-            
     elif lower_text.startswith("/calc"):
         try:
             parts = text.split()
@@ -259,7 +253,6 @@ def handle_telegram_command(chat_id, text):
                 reply_text = "⚠️ الاستخدام الصحيح:\n`/calc [سعر الدخول] [وقف الخسارة]`\nمثال: `/calc 4075 4045`"
         except Exception:
             reply_text = "❌ خطأ في تنسيق الأرقام."
-            
     elif lower_text == "/last":
         last_trade = get_last_trade_from_db()
         if last_trade:
@@ -267,7 +260,6 @@ def handle_telegram_command(chat_id, text):
             reply_text = f"📊 **آخر صفقة مسجلة:**\n• التوقيت: `{ts}`\n• الاتجاه: `{action}`\n• الدخول: `{entry}`\n• الوقف: `{sl}`\n• الهدف الأول: `{tp1}`\n• حجم العقد: `{lot} Lot`"
         else:
             reply_text = "📭 لا توجد صفقات مسجلة حتى الآن."
-            
     elif lower_text == "/help":
         reply_text = (
             "📌 **قائمة الأوامر التفاعلية للبوت:**\n"
@@ -277,7 +269,7 @@ def handle_telegram_command(chat_id, text):
             "• `/last` - عرض آخر صفقة مسجلة.\n"
             "• `/help` - عرض هذه القائمة."
         )
-        
+
     if reply_text:
         requests.post(url, json={"chat_id": chat_id, "text": reply_text, "parse_mode": "Markdown"})
 
@@ -326,17 +318,22 @@ def fetch_live_economic_calendar() -> str:
 def fetch_market_metrics() -> dict:
     ind = EnterpriseEngine.calculate_indicators()
     news_status = fetch_live_economic_calendar()
-
     risk_distance = max(ind['atr'] * 1.2, 8.0)
-    action = "شراء Long"
+    
+    action = "شراء Long" if "Bullish" in ind['trend'] else "بيع Short"
     entry = ind['price']
-    sl = round(entry - risk_distance, 2)
-    tp1 = round(entry + (risk_distance * 2.5), 2)
-    tp2 = round(entry + (risk_distance * 4.0), 2)
-
+    
+    if action == "شراء Long":
+        sl = round(entry - risk_distance, 2)
+        tp1 = round(entry + (risk_distance * 2.5), 2)
+        tp2 = round(entry + (risk_distance * 4.0), 2)
+    else:
+        sl = round(entry + risk_distance, 2)
+        tp1 = round(entry - (risk_distance * 2.5), 2)
+        tp2 = round(entry - (risk_distance * 4.0), 2)
+        
     lot_size = EnterpriseEngine.calculate_position_size(DEFAULT_ACCOUNT_SIZE, DEFAULT_RISK_PERCENTAGE, entry, sl)
-    trailing_stop_desc = "يتحرك وقف الخسارة تدريجياً وبشكل تلقائي بمقدار أرباح الهدف الأول (TP1)."
-
+    
     trade_setup = {
         "action": action,
         "entry": entry,
@@ -344,10 +341,10 @@ def fetch_market_metrics() -> dict:
         "tp1": tp1,
         "tp2": tp2,
         "lot_size": lot_size,
-        "trailing_stop": trailing_stop_desc,
-        "rr": "1:3.5"
+        "trailing_stop": "يتحرك وقف الخسارة تدريجياً وبشكل تلقائي بمقدار أرباح الهدف الأول (TP1).",
+        "rr": "1:2.5"
     }
-
+    
     return {
         "symbol": "XAUUSD (الذهب الفوري مقابل الدولار)",
         "current_price": ind['price'],
@@ -362,12 +359,12 @@ def fetch_market_metrics() -> dict:
     }
 
 # ===========================================================================
-# 7. وكلاء الذكاء الاصطناعي (تمت إضافة مدير المخاطر)
+# 7. وكلاء الذكاء الاصطناعي (CrewAI)
 # ===========================================================================
 analyst_agent = Agent(
     role="Enterprise Chief Quantitative Officer",
-    goal="Synthesize multi-timeframe quantitative data, MACD, Bollinger Bands, and risk parameters.",
-    backstory="Global head of quantitative analysis. You read market numbers logically without emotion.",
+    goal="Synthesize multi-timeframe quantitative data, MACD, Bollinger Bands, and risk parameters logically without emotion.",
+    backstory="Global head of quantitative analysis on Wall Street.",
     llm=groq_llm,
     verbose=True
 )
@@ -375,7 +372,7 @@ analyst_agent = Agent(
 risk_manager_agent = Agent(
     role="Strict Risk Manager",
     goal="Protect capital by strictly reviewing the trade setup. Ensure Stop Loss (SL) is present and risk distance is safe. Reject unsafe trades.",
-    backstory="You are the ultimate gatekeeper. You hate uncalculated risk. If the trend is unclear or the setup is weak, you strictly veto the trade.",
+    backstory="You are the ultimate gatekeeper. You hate uncalculated risk. If the trend is unclear or high-impact news is imminent, veto the trade.",
     llm=groq_llm,
     verbose=True
 )
@@ -389,7 +386,7 @@ signal_agent = Agent(
 )
 
 task1 = Task(
-    description="Analyze inputs: {market_data}. Determine the trend and technical strength.",
+    description="Analyze inputs: {market_data}. Determine the technical strength and risk dynamic.",
     expected_output="Technical analysis report.",
     agent=analyst_agent
 )
@@ -397,7 +394,7 @@ task1 = Task(
 task_risk = Task(
     description=(
         "Review the technical report and {market_data}. "
-        "Check if the pre_calculated_trade is safe (e.g., has a valid SL, trend matches action). "
+        "Check if the pre_calculated_trade is safe (valid SL, clear trend). "
         "If unsafe, highly volatile, or facing high impact news, output a VETO command. If safe, output APPROVED."
     ),
     expected_output="APPROVED or VETO with a short explanation.",
@@ -407,29 +404,10 @@ task_risk = Task(
 
 task2 = Task(
     description=(
-        "Read the Risk Manager's decision. "
-        "IF the decision is VETO, output exactly: '⚠️ **تدخل مدير المخاطر:** تم إلغاء الصفقة نظراً لارتفاع المخاطرة أو عدم وضوح الاتجاه. حماية رأس المال هي الأولوية.'\n"
-        "IF the decision is APPROVED, format the following card exactly in Arabic:\n"
-        "🌐 **بطاقة التداول المؤسسي المتقدمة (XAUUSD)**\n"
-        "-----------------------------------\n"
-        "📍 **السعر الحالي:** [current_price]\n"
-        "📈 **الترند العام (4h):** [macro_trend_4h]\n"
-        "📊 **اتجاه الصفقة:** [action من pre_calculated_trade]\n"
-        "مؤشر RSI: [rsi_14] | ATR: [atr_14] | MACD: [macd_val]\n"
-        "Bollinger Bands ➔ العليا: [bb_upper] | السفلى: [bb_lower]\n\n"
-        "🎯 **تفاصيل المعلمات والمخاطر:**\n"
-        "• **سعر الدخول:** [entry]\n"
-        "• **وقف الخسارة الأولي:** [sl]\n"
-        "• **حجم العقد المقترح (Lot Size):** [lot_size] (مبني على مخاطرة 1%)\n"
-        "• **الهدف الأول:** [tp1]\n"
-        "• **الهدف الثاني (TP2):** [tp2]\n"
-        "• **نسبة العائد للمخاطرة:** [rr]\n\n"
-        "🛡️ **استراتيجية التوقف المتحرك:**\n"
-        "[trailing_stop من pre_calculated_trade]\n\n"
-        "📰 **التقويم الاقتصادي الحي:**\n"
-        "[live_news]\n\n"
-        "💡 **التحليل المؤسسي:**\n"
-        "تم التدقيق من قبل فريق إدارة المخاطر واعتماد الصفقة."
+        "قم بصياغة بطاقة توصية تداول مؤسسية شاملة باللغة العربية الفصحى مستخدماً المعطيات في {market_data}.\n"
+        "إذا كان قرار مدير المخاطر VETO أخرج النص التالي حصراً بدون تغيير:\n"
+        "'⚠️ **تدخل مدير المخاطر:** تم إلغاء الصفقة نظراً لارتفاع المخاطرة أو عدم وضوح الاتجاه. حماية رأس المال هي الأولوية.'\n"
+        "أما إذا كان APPROVED، أخرج بطاقة تداول كاملة تتضمن السعر الحالي، نقاط الدخول، والوقف، والأهداف، ومؤشرات التقويم الاقتصادي."
     ),
     expected_output="Final formatted message for Telegram (either trade card or Veto message).",
     agent=signal_agent,
@@ -443,46 +421,39 @@ crew = Crew(
     verbose=True
 )
 
-def background_bot_loop():
-    while True:
-        try:
-            now = datetime.now()
-            current_time = now.strftime("%Y-%m-%d %H:%M:%S")
-            weekday = now.weekday()
-            
-            if weekday == 5 or weekday == 6:
-                time.sleep(14400)
-                continue
-
-            print(f"\n[🕒 {current_time}] 🚀 جاري إرسال التحليل المؤسسي الدوري...")
-            market_data = fetch_market_metrics()
-            raw_data_str = json.dumps(market_data, indent=2, ensure_ascii=False)
-            
-            result = crew.kickoff(inputs={"market_data": raw_data_str})
-            result_text = str(result)
-            
-            send_telegram_message(result_text)
-            
-            # تسجيل الصفقة فقط إذا وافق عليها مدير المخاطر (لم يتم عمل فيتو)
-            if "تدخل مدير المخاطر" not in result_text:
-                log_trade_to_db(market_data['pre_calculated_trade'], current_time)
-                
-            print("[+] ✅ تمت دورة الإرسال بنجاح!")
-            
-        except Exception as e:
-            print(f"[-] خطأ: {e}")
-            
-        time.sleep(3600)
-
 # ===========================================================================
-# 8. التشغيل المتزامن (الويب + التليجرام + حلقة البوت)
+# 8. الحلقة الرئيسية لتشغيل البوت (Main Loop)
 # ===========================================================================
+def run_bot_cycle():
+    print("[+] بدء دورة تحليل السوق...")
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    market_data = fetch_market_metrics()
+    
+    result = crew.kickoff(inputs={"market_data": json.dumps(market_data, ensure_ascii=False)})
+    result_text = str(result)
+    
+    send_telegram_message(result_text)
+    
+    if "تدخل مدير المخاطر" not in result_text and "إلغاء الصفقة" not in result_text:
+        log_trade_to_db(market_data['pre_calculated_trade'], current_time)
+        print("[+] ✅ تمت الدورة وتم تسجيل الصفقة المعتمدة.")
+    else:
+        print("[!] ⚠️ تم إلغاء الصفقة من قبل مدير المخاطر.")
+
 if __name__ == "__main__":
     init_db()
     
-    # تشغيل بوت التليجرام التفاعلي وحلقة البوت في خيوط خلفية (Threads)
-    threading.Thread(target=telegram_listener_thread, daemon=True).start()
-    threading.Thread(target=background_bot_loop, daemon=True).start()
+    flask_thread = threading.Thread(target=run_web_server, daemon=True)
+    flask_thread.start()
     
-    # تشغيل خادم الويب في الخيط الرئيسي لضمان الاستضافة السحابية
-    run_web_server()
+    telegram_thread = threading.Thread(target=telegram_listener_thread, daemon=True)
+    telegram_thread.start()
+    
+    print("[+] 🤖 Bot Web Server & Telegram Listener are active!")
+    
+    while True:
+        try:
+            run_bot_cycle()
+        except Exception as e:
+            print(f"[-] خطأ أثناء تشغيل الدورة: {e}")
+        time.sleep(1800)
